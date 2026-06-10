@@ -10,7 +10,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from ultralytics import YOLO
 
-from notification import send_discord_alert
+from notification import send_discord_fire_alert
 from utils import setup_logger
 
 # 1. Khởi tạo logger riêng cho module AI
@@ -21,9 +21,9 @@ load_dotenv(override=True)
 
 RTSP_URL = os.getenv("RTSP_URL_1")
 ROOT_ALERT_DIR = os.getenv("ROOT_ALERT_DIR")
-MODEL_PATH = "models/model_1.pt"
-DETECTION_INTERVAL = 5  
-SCORE_THRESHOLD = 0.6  
+MODEL_PATH = Path("models") / os.getenv("LOCAL_MODEL_FILENAME_1")
+DETECTION_INTERVAL = int(os.getenv("DETECTION_INTERVAL", 5))
+ALERT_THRESHOLD = float(os.getenv("ALERT_THRESHOLD", 0.6))  # Mặc định 0.6 nếu .env thiếu
 
 def run_ai_monitor():
     # Kiểm tra cấu hình môi trường
@@ -42,9 +42,14 @@ def run_ai_monitor():
     
     alert_dir = Path(ROOT_ALERT_DIR)
     alert_dir.mkdir(exist_ok=True, parents=True)
+    source_dir = Path(os.getenv("ROOT_SOURCE_DIR", ""))
+    source_dir.mkdir(exist_ok=True, parents=True)
+
+    # 🔥 FIX 1: Ép OpenCV sử dụng giao thức TCP để giữ kết nối ổn định 24/7 với Gateway
+    os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 
     # Kết nối luồng Camera
-    logger.info("📹 Đang kết nối tới Camera_1")
+    logger.info("📹 Đang kết nối tới Camera_1 (Qua kết nối TCP)...")
     cap = cv2.VideoCapture(RTSP_URL)
 
     if not cap.isOpened():
@@ -53,9 +58,9 @@ def run_ai_monitor():
 
     logger.info(f"🔥 Hệ thống AI kích hoạt thành công! Quét mỗi {DETECTION_INTERVAL} giây...")
     last_processed_time = time.time()
+    is_interrupted = False
 
     try:
-        is_interrupted = False
         while True:
             ret, frame = cap.read()
             if not ret:
@@ -73,38 +78,40 @@ def run_ai_monitor():
             if current_time - last_processed_time >= DETECTION_INTERVAL:
                 last_processed_time = current_time
                 
-                # Chạy AI dự đoán
-                results = model(frame, conf=0.25, verbose=False)
+                # 🔥 FIX 4: Đưa ALERT_THRESHOLD thẳng vào YOLO để lọc từ gốc, tăng tốc độ xử lý
+                results = model(frame, conf=ALERT_THRESHOLD, verbose=False)
                 result = results[0]
 
                 if len(result.boxes) > 0:
                     now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    source_filename = source_dir / f"ALERT_{now_str}.jpg"
                     alert_filename = alert_dir / f"ALERT_{now_str}.jpg"
                     
                     detected_objects = []
-                    is_alert = False
                     for box in result.boxes:
                         cls_id = int(box.cls[0])
                         label = model.names[cls_id]
                         conf_score = float(box.conf[0]) * 100
-                        if conf_score >= SCORE_THRESHOLD * 100:
-                            is_alert = True
                         detected_objects.append(f"{label} ({conf_score:.1f}%)")
                     
-                    if is_alert:
-                        logger.info(f"🚨 [CẢNH BÁO] Phát hiện: {', '.join(detected_objects)}")
-                        result.save(filename=str(alert_filename))
-                        logger.info(f"💾 Đã lưu bằng chứng tại: {alert_filename}")
-                        msg = f"Phát hiện nguy hiểm lúc {datetime.now().strftime('%H:%M:%S')}: {', '.join(detected_objects)}"
-                        logger.info(f"🚨 Gửi cảnh báo Discord")
-                        
-                        # Lưu ảnh
-                        result.save(filename=str(alert_filename))
-                        
-                        # Gửi cảnh báo Discord
-                        send_discord_alert(msg, image_path=str(alert_filename))
-                        
-                        logger.info("✅ Đã gửi cảnh báo thành công!")
+                    logger.info(f"🚨 [CẢNH BÁO] Phát hiện nguy hiểm: {', '.join(detected_objects)}")
+                    
+                    # 🔥 FIX 3: Dọn dẹp code trùng lặp ghi file, chỉ ghi ảnh 1 lần duy nhất
+                    result.save(filename=str(alert_filename))
+                    cv2.imwrite(str(source_filename), frame)
+                    logger.info(f"💾 Đã lưu bằng chứng tại: {alert_filename}")
+                    
+                    # Gửi cảnh báo Discord
+                    msg = f"Phát hiện nguy hiểm lúc {datetime.now().strftime('%H:%M:%S')}: {', '.join(detected_objects)}"
+                    logger.info("🚨 Đang bắn cảnh báo lên Discord...")
+                    send_discord_fire_alert(msg, image_path=str(alert_filename))
+                    logger.info("✅ Đã gửi cảnh báo thành công!")
+                
+                # 🔥 FIX 2: Chỉ giải phóng các biến AI khi chúng thực sự được tạo ra ở chu kỳ quét
+                del results, result
+
+            # Dọn dẹp frame hiện tại ở mỗi vòng lặp để tránh rò rỉ RAM (Memory Leak)
+            del frame
                     
     except KeyboardInterrupt:
         logger.info("🛑 Đang đóng hệ thống giám sát AI...")

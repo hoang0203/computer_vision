@@ -1,9 +1,13 @@
 import json
+import os
 
 
 from pathlib import Path
 
 from huggingface_hub import hf_hub_download
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
 
 def download_and_update_metadata(repo_id: str, filename: str, local_filename: str = None, local_folder: str = "models"):
     # 1. Tạo thư mục cục bộ nếu chưa có
@@ -55,9 +59,12 @@ def download_and_update_metadata(repo_id: str, filename: str, local_filename: st
     print(f"Đã cập nhật metadata cho {model_key}!")
 
 if __name__ == "__main__":
+    REPO_ID = os.getenv("REPO_ID_1")
+    FILENAME = os.getenv("MODEL_FILENAME_1")
+    LOCAL_FILENAME = os.getenv("LOCAL_MODEL_FILENAME_1")  # Tên file bạn muốn lưu ở máy local
     download_and_update_metadata(
-        repo_id="TommyNgx/YOLOv10-Fire-and-Smoke-Detection",
-        filename="best.pt",
-        local_filename="model_1.pt"  # Tên file bạn muốn lưu ở máy local
+        repo_id=REPO_ID,
+        filename=FILENAME,
+        local_filename=LOCAL_FILENAME
     )
     

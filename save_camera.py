@@ -3,7 +3,11 @@ import subprocess
 import time
 import threading
 import re
+
+
 from dotenv import load_dotenv
+
+from notification import send_discord_camera_alert
 from utils import setup_logger
 
 # 1. Khởi tạo logger riêng cho module ghi hình
@@ -79,24 +83,59 @@ def start_recording():
         return process
     except FileNotFoundError:
         logger.error("❌ Lỗi: Không tìm thấy FFmpeg trong hệ thống.")
+        send_discord_camera_alert("❌ Lỗi: Không tìm thấy FFmpeg trong hệ thống. Vui lòng cài đặt FFmpeg và đảm bảo nó có trong PATH.")
         return None
 
 if __name__ == "__main__":
     if RTSP_URL and ROOT_DIR:
-        proc = start_recording()
-        if proc:
-            try:
-                logger.info("📌 Hệ thống đang giám sát luồng ghi hình 24/7. Nhấn Ctrl+C để dừng.")
+        
+        # --- CẤU HÌNH LOGIC RESTART ---
+        MAX_RESTARTS = 3
+        STABLE_UPTIME_SECONDS = 1 * 60  # 15 phút (tính bằng giây)
+        restart_count = 0
+        
+        try:
+            while True:
+                # Logic 1: Kiểm tra giới hạn khởi động lại
+                if restart_count >= MAX_RESTARTS:
+                    logger.error(f"❌ Đã sập {MAX_RESTARTS} lần liên tục. Ngừng cố gắng khởi động lại để bảo vệ hệ thống!")
+                    send_discord_camera_alert(f"🚨 **BÁO ĐỘNG ĐỎ:** Camera mất kết nối hoàn toàn. Đã thử khởi động lại {MAX_RESTARTS} lần nhưng thất bại. Vui lòng kiểm tra phần cứng hoặc mạng ngay lập tức!")
+                    break  # Thoát hẳn khỏi vòng lặp vô hạn
+
+                proc = start_recording()
+                
+                if not proc:
+                    break 
+
+                logger.info(f"📌 Hệ thống đang giám sát luồng ghi hình 24/7 (Lần thử: {restart_count}/{MAX_RESTARTS}).")
+                
+                # Ghi nhận thời điểm FFmpeg bắt đầu chạy
+                process_start_time = time.time()
+                
                 while proc.poll() is None:
-                    time.sleep(60)  
+                    time.sleep(5) 
+                    
+                    # Logic 2: Reset bộ đếm nếu hệ thống sống sót qua 15 phút
+                    current_uptime = time.time() - process_start_time
+                    if current_uptime >= STABLE_UPTIME_SECONDS and restart_count > 0:
+                        logger.info("✅ Luồng ghi hình đã hoạt động ổn định liên tục 15 phút. Khôi phục lại bộ đếm restart về 0.")
+                        restart_count = 0  # Reset bộ đếm
                 
-                logger.warning(f"⚠️ Tiến trình FFmpeg đã tự thoát đột ngột với mã lỗi: {proc.returncode}")
+                # Nếu code chạy xuống đây, tức là FFmpeg đã sập
+                restart_count += 1
+                logger.warning(f"⚠️ Tiến trình FFmpeg tự thoát (Mã lỗi: {proc.returncode}). Chuẩn bị khởi động lại lần {restart_count}...")
+                send_discord_camera_alert(f"⚠️ Tiến trình ghi hình văng (Mã lỗi: {proc.returncode}). Đang thử khởi động lại lần {restart_count}/{MAX_RESTARTS} sau 10 giây...")
                 
-            except KeyboardInterrupt:
-                logger.info("🛑 Đang dừng ghi hình an toàn theo yêu cầu người dùng...")
+                time.sleep(10)
+                
+        except KeyboardInterrupt:
+            logger.info("🛑 Đang dừng ghi hình an toàn theo yêu cầu người dùng...")
+            if 'proc' in locals() and proc and proc.poll() is None:
                 proc.terminate()
                 proc.wait()
-                logger.info("✅ Đã giải phóng luồng ghi hình thành công.")
+            logger.info("✅ Đã giải phóng luồng ghi hình thành công và thoát hẳn.")
+            
     else:
         logger.error("❌ Lỗi: Kiểm tra lại file .env, đảm bảo có đủ RTSP_URL và ROOT_DIR.")
+        send_discord_camera_alert("❌ Lỗi cấu hình: Kiểm tra lại file .env, đảm bảo có đủ RTSP_URL và ROOT_DIR.")
         

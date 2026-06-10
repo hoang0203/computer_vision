@@ -33,7 +33,7 @@ def start_system():
         running_processes.append(p_gateway)
         
         logger.info("⏳ Chờ MediaMTX Gateway khởi động...")
-        time.sleep(4)
+        time.sleep(10)
 
         # =====================================================================
         # TIẾN TRÌNH 2: Ghi hình

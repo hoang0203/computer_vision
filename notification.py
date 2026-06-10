@@ -13,7 +13,7 @@ logger = setup_logger("notifier", "notification.log")
 load_dotenv(override=True)
 DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")
 
-def send_discord_alert(message, image_path=None):
+def send_discord_fire_alert(message, image_path=None):
     """Gửi tin nhắn và ảnh cảnh báo qua Discord Webhook"""
     if not DISCORD_WEBHOOK:
         logger.error("❌ DISCORD_WEBHOOK chưa được cấu hình trong file .env")
@@ -33,6 +33,26 @@ def send_discord_alert(message, image_path=None):
             
         if response.status_code in [200, 204]:
             logger.info("✅ Đã gửi cảnh báo qua Discord thành công!")
+        else:
+            logger.error(f"❌ Lỗi khi gửi Discord: {response.status_code} - {response.text}")
+            
+    except Exception as e:
+        logger.error(f"❌ Lỗi hệ thống khi gửi Discord: {e}")
+
+def send_discord_camera_alert(message):
+    """Gửi tin nhắn cảnh báo liên quan đến camera qua Discord Webhook"""
+    if not DISCORD_WEBHOOK:
+        logger.error("❌ DISCORD_WEBHOOK chưa được cấu hình trong file .env")
+        return
+
+    data = {
+        "content": f"📹 **CẢNH BÁO CAMERA** 📹\n{message}"
+    }
+    
+    try:
+        response = requests.post(DISCORD_WEBHOOK, json=data)
+        if response.status_code in [200, 204]:
+            logger.info("✅ Đã gửi cảnh báo camera qua Discord thành công!")
         else:
             logger.error(f"❌ Lỗi khi gửi Discord: {response.status_code} - {response.text}")
             
